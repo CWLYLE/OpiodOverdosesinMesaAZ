@@ -1,0 +1,1146 @@
+---
+title: "Final Overdose Predictions"
+author: "Saiya Sheth + Clara Lyle"
+date: "December, 2nd 2022"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    code_download: true
+---
+
+# Introduction
+
+This document is the final project of Clara Lyle and Saiya Sheth for MUSA 508, Public Policy Analytics at the University of Pennsylvania.  The aim of this project is to build a predictive risk model for opioid overdoses in Mesa, AZ using risk factors, spatial features, temporal data and demographics. The predictive risk model developed below has been created for a mock dashboard proposal, called ASSIST. The aim of ASSSIST is to target opioid overdose locations in Mesa, AZ in order to effectively deploy mobile response units for opioid   prevention and treatment. 
+
+See a video that further describes ASSIST here: [Watch the video presentation here](https://youtu.be/pESqFtukRr0)
+
+# Use Case and Motivation
+
+Since 1999 nearly 800,000 Americans have died from opioid or synthetic opioid connected overdoses. In 2017, the Department of Health and Human Services declared the opioid epidemic a public health emergency, which initiated increased funding, tracking and prevention measures at the federal, state and county level. 
+
+In Arizona, from 2017 to 2021, there have been 81,990 suspected opioid overdoses. In 2019, Arizona state spent $6 million on opioid related encounters that included emergency room visits, EMT response, treatment, and Narcan administration. This was a 74% increase since the previous year. Maricopa County has the highest number of overdoses in Arizona. Maricopa County contains the urban centers of Phoenix, Tempe, Scottsdale and Mesa. 
+
+In Mesa, opioid overdoses have been increasing. In 2020, opioid overdoses in Mesa increased 76% and the number of deaths resulting from opioid overdose increased by 132%. Due to the increases in opioid overdoses in Mesa, Arizona, we have developed a dashboard to provide targeted opioid support called ASSIST. 
+
+ASSIST is designed to predict opioid overdose locations to effectively and efficiently deploy mobile treatment and addiction prevention in the Mesa area. It prioritizes public health prevention by targeting specific areas to mitigate the current opioid crisis. The dashboard will include a map containing information on areas with predicted high risk of overdoses. The map will display information, such as the number of predicted overdoses and how many overdoses there were in the area last month. Once providers and health service agencies are alerted to the high risk areas, they can deploy mobile health vans. These vans can bring current public health programs to high risk locations, these programs include:
+
+* Have medication available to reverse overdose events, such as Narcan
+* Conduct outreach by promoting harm reduction methods and disseminating information on Mesa's Good Samaritan Laws, Syringe Service Programs and Medicated Assisted Treatment
+* Have or refer to STI, HIV, and Hepatitis C testing sites and linkage to care
+* Refer to PrEP providers 
+* Deploy peer support specialists and counselors in Trauma Informed Care
+* Medical assistants can connect users to telehealth
+* Refer users to needle exchange programs and hand out test strips to identify fentanyl 
+* Link pregnant women to care and support to prevent Neonatal Abstinence Syndrome and Neonatal Opioid Withdrawl Syndrome 
+
+
+Using ASSIST, hospitals, health departments, social services can better understand where to allocate their mobile resources to prevent opioid overdoses. By using the available data and inputting some of their own planning, these agencies can better coordinate services and resources to the areas most in need. The Arizona State Department of Health is aiming to decrease opioid deaths and non-fatal overdoses throughout the state by 10% and 15%, respectively. 
+
+ASSIST helps providers align with state health initiatives and contains all the facets of a strong response program- robust data collection, impact measurement, data equity and innovation, and cross-sector partnerships. Additionally, the dashboard will allow for integration with other city and statewide dashboards that track data on opioid overdoses and prevention measures, such as the Mesa RX toolkit which shows treatment locations and clinics. 
+
+Opioid overdose prevention is at the top of the state and city's agenda. Implementing prevention measures saves the city, state and medical system money. Aside from the economic benefits of public health prevention programs, the social benefits are vast. Lives can be saved. 
+
+```{r setup, include = FALSE, results = 'hide'}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+library(tidyverse)
+library(sf)
+library(RSocrata)
+library(viridis)
+library(spatstat)
+library(raster)
+library(spdep)
+library(FNN)
+library(grid)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(tidycensus)
+library(rjson)
+library(geojsonR)
+library(stargazer)
+library(readr)
+library(mapview)
+library(caret)
+library(ckanr)
+library(ggcorrplot)
+library(dplyr)
+library(jtools)
+library(jsonlite)
+
+options(scipen=999)
+options(tigris_class = "sf")
+setwd("~/Fall 2021, Semester 3/Public Policy Analytics")
+
+#Load map and plot theme
+mapTheme <- function(base_size = 12) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 14,colour = "black"),
+    plot.subtitle=element_text(face="italic"),
+    plot.caption=element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.text.x = element_text(size = 12))
+}
+
+plotTheme <- function(base_size = 10) {
+  theme(
+    text = element_text( color = "black"),
+    plot.title = element_text(size = 11,colour = "black"),
+    plot.subtitle = element_text(face="italic"),
+    plot.caption = element_text(hjust=0),
+    axis.ticks = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line("grey80", size = 0.1),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    strip.background = element_rect(fill = "grey80", color = "white"),
+    strip.text = element_text(size=10),
+    axis.title = element_text(size=10),
+    axis.text = element_text(size=10),
+    plot.background = element_blank(),
+    legend.background = element_blank(),
+    legend.title = element_text(colour = "black", face = "italic"),
+    legend.text = element_text(colour = "black", face = "italic"),
+    strip.text.x = element_text(size = 12)
+  )
+}
+
+#load color palettes
+palette5 <- c("#F0F9E8","#BAE4BC","#7BCCC4","#43A2CA","#0868AC")
+palette4 <- c("#E6A0C4", "#C6CDF7", "#D8A499", "#7294D4")
+palette_3_colors <- c("#D8B70A", "#02401B", "#A2A475")
+palette_2_colors <- c("#EAD3BF", "#AA9486")
+palette_1_colors <- c("#02401B")
+paletteMap <- c("#08519c","#3182bd","#6baed6","#bdd7e7","#eff3ff")
+
+#readinfunctions
+root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
+source("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/functions.r")
+
+```
+
+## Data Wrangling 
+
+The outcome variable used in this project is opioid overdoses in Mesa, AZ, taken from a dataset provided by the City of Mesa's Open GIS Portal as Opioid Overdose Locations. There are very few known and understood risk factors for opioid overdoses. The only known associations are between opioid overdose mortality rates and opioid prescription rates, the availability of Narcan, urbanity, mental health, and in many places being male aged 20 to 40. 
+
+With this information we were not able to choose features that align perfectly with the public health information, the features we choose to explore to inform our predictive model are demographics, crime, and parks. For our analysis, data was acquired from the City of Mesa’s Open GIS Portal and ACS Data for Maricopa County by census tracts. We filtered out various features from police point data, from Mesa's Open GIS Portal, such as Narcotic Possession, Disorderly Conduct, Suicide, Car Break-ins, Shoplifting, and Posession of Paraphanelia.The ACS data gathered was from 2019 and 2017. The demographic features chosen are: Vacancy, Median Household Income, Employment, Hispanic, Native American, Poverty Rates
+
+
+```{r, warning=FALSE, message=FALSE, results = 'hide'}
+
+#Saiya census data
+library(tidycensus)
+library(stringr)
+library(magrittr)
+
+#census_api_key("e79f3706b6d61249968c6ce88794f6f556e5bf3d", overwrite = TRUE)
+
+acs_variable_list.2017 <- load_variables(2017, #year
+                                         "acs5", #five year ACS estimates
+                                         cache = TRUE)
+
+acs_vars <-  c("B25026_001E","B02001_002E","B15001_050E",
+                                             "B15001_009E","B19013_001E","B25058_001E",
+                                             "B06012_002E", "B02001_003E", "B02001_004E","B25035_001E", "B25002_003E",  "B03001_001E")
+
+acsTractsMESA.2017 <- get_acs(geography = "tract",
+                             year = 2017, 
+                             variables = acs_vars, 
+                             geometry = T, 
+                             state = 04, 
+                             county = 013, 
+                             output = "wide")  %>%
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform('ESRI:102248') %>%      distinct() %>%
+  rename(TotalPop = B25026_001E, Whites = B02001_002E, Black = B02001_003E, NativeAm = B02001_004E, Hisp = B03001_001E, MedianYrBuilt = B25035_001E, TotalVacant = B25002_003E,
+         FemaleBachelors = B15001_050E, MaleBachelors = B15001_009E,
+         MedHHInc = B19013_001E, MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop),0),
+         pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+         year = "2017") %>%
+  dplyr::select(-Whites, -FemaleBachelors, -MaleBachelors, -TotalPoverty) 
+ 
+```
+
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+
+# Read in Spatial Data
+dataset <- read.socrata("https://data.mesaaz.gov/resource/qufy-tzv6.json") %>% filter(year %in% c("2017", "2018", "2019", "2020"))%>% na.omit() 
+
+
+
+cityBound <- st_read("https://opendata.arcgis.com/datasets/b56f02cdc87643b593ceebcd28669564_0.geojson") %>%
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform('ESRI:102248') %>%      distinct()
+
+#SAIYA DRIVE
+#MesaTracts <- st_read("C:/Users/17654/Documents/MUSA 508 Public Policy Analytics/MesaCensus.geojson") %>%
+#     st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   #st_transform('ESRI:102248') %>%      distinct()
+
+#CLARA DRIVE
+MesaTracts <- st_read("Mesa Census Tracts To City Boundary.geojson") %>%
+     st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform('ESRI:102248') %>%      distinct()
+
+#count of OD per fishnet grid cell
+fishnet <- 
+  st_make_grid(cityBound,
+               cellsize = 500, 
+               square = TRUE) %>%
+  .[cityBound] %>%           
+  st_sf() %>%
+  mutate(uniqueID = rownames(.))
+
+
+OD21 <- read.socrata("https://data.mesaaz.gov/resource/qufy-tzv6.json") %>% filter(year==2021)  %>% na.omit %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%  st_transform(st_crs(fishnet)) %>% distinct() %>% mutate(countOD21 = 1)
+
+ 
+
+#read in police data
+PoliceData <- read.socrata("https://data.mesaaz.gov/resource/39rt-2rfj.json") 
+
+NarcArrest<- PoliceData %>%
+  filter(crime_type == "NARCOTIC DRUG-POSSESS-USE") %>% dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%  st_transform(st_crs(fishnet))%>% distinct() %>%
+  mutate(legend = "NarcArrest")
+
+Suicide<- PoliceData %>% filter(crime_type == "SUICIDE ATTEMPT") %>% dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%  st_transform(st_crs(fishnet))%>% distinct() %>%
+  mutate(legend = "Suicide")
+
+PossofPara <- PoliceData %>%
+  filter(crime_type == "DRUG PARAPHERNALIA-POSSESS-USE")%>%
+    dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%  st_transform(st_crs(fishnet)) %>% distinct() %>%
+  mutate(legend = "Possession of Paraphernalia")
+
+shoplifting <- 
+  PoliceData%>%
+  filter(crime_type == "SHOPLIFTING-REMOVAL OF GOODS")%>%
+     dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%  st_transform(st_crs(fishnet)) %>% distinct() %>%
+  mutate(legend = "Shoplifting")
+
+car_breakins <- 
+  PoliceData %>%
+  filter(crime_type == "BURGLARY, AUTO - 3RD DEGREE")%>%
+     dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>% st_transform(st_crs(fishnet)) %>% distinct() %>%
+  mutate(legend = "CarBreakins")
+
+Disorderly.Conduct<- 
+  PoliceData %>%
+  filter(crime_type == "DISORDERLY CONDUCT")%>%
+     dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>% st_transform(st_crs(fishnet)) %>% distinct() %>%
+  mutate(legend = "DisorderlyConduct")
+
+
+UnshelteredSt <- read.socrata("https://data.mesaaz.gov/resource/qhak-epdf.json") %>% dplyr::filter(municipality == "Mesa") 
+
+#FOR CLARA COMPUTER TAKE OUT COMMENT 
+#TractData <- st_read("Census_2020_PL_94-171_for_Arizona.geojson") %>%
+ # dplyr::filter(county == "Maricopa")%>%  st_transform('ESRI:102248') %>%  distinct()
+ 
+#HousingFC <- st_read("https://data.mesaaz.gov/resource/x436-frnn.json") %>% st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform('ESRI:102248') %>%      distinct()
+
+#Zoning <- st_read("Zoning Districts.geojson") %>%   st_transform('ESRI:102248') %>%   distinct()
+ 
+SchoolsFreeLunchPct <- 
+  read.socrata("https://data.mesaaz.gov/resource/smdi-gyww.json")%>%
+  filter(percent >= "50") %>%
+    dplyr::select(Y = location.latitude, X = location.longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>%
+     st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform(st_crs(fishnet)) %>%      distinct()%>%
+  mutate(legend = "Schools Free Lunch")
+  
+Parks<- 
+  read.socrata("https://data.mesaaz.gov/resource/djym-pkpp.json")%>%
+    dplyr::select(Y = latitude, X = longitude) %>%
+    na.omit() %>%
+    st_as_sf(coords = c("X", "Y"), crs = 4326, agr = "constant") %>% distinct()%>% st_transform(st_crs(fishnet)) %>%
+    mutate(legend = "Parks")
+
+EVIC <-  read.socrata("https://data.mesaaz.gov/resource/x436-frnn.json")%>%  dplyr::filter(geography == "Mesa")%>% dplyr::select(-foreclosures, -pending_foreclosures) 
+```
+
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+#Read in ACS data 2017 and 2019
+## ADD MORE TRACTS
+
+tracts17 <- 
+  get_acs(geography = "tract", variables = c("B25026_001E","B02001_002E","B15001_050E",
+                                             "B15001_009E","B19013_001E","B25058_001E",
+                                             "B06012_002E", "B02001_003E", "B02001_004E","B25035_001E", "B25002_003E",  "B03001_001E"), 
+          year=2017, state=04, county=013, geometry=T, output="wide") %>%
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform('ESRI:102248') %>%      distinct() %>%
+  rename(TotalPop = B25026_001E, Whites = B02001_002E, Black = B02001_003E, NativeAm = B02001_004E, Hisp = B03001_001E, MedianYrBuilt = B25035_001E, TotalVacant = B25002_003E,
+         FemaleBachelors = B15001_050E, MaleBachelors = B15001_009E,
+         MedHHInc = B19013_001E, MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop),0),
+         pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+         year = "2017") %>%
+  dplyr::select(-Whites, -FemaleBachelors, -MaleBachelors, -TotalPoverty) 
+
+tracts19 <- 
+   get_acs(geography = "tract", variables = c("B25026_001E","B02001_002E","B15001_050E",
+                                             "B15001_009E","B19013_001E","B25058_001E",
+                                             "B06012_002E", "B02001_003E", "B02001_004E","B25035_001E", "B25002_003E",  "B03001_001E"), 
+          year=2019, state=04, county=013, geometry=T, output="wide") %>%
+    st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%   st_transform('ESRI:102248') %>%      distinct() %>%
+  rename(TotalPop = B25026_001E, Whites = B02001_002E, Black = B02001_003E, NativeAm = B02001_004E, Hisp = B03001_001E, MedianYrBuilt = B25035_001E, TotalVacant = B25002_003E,
+         FemaleBachelors = B15001_050E, MaleBachelors = B15001_009E,
+         MedHHInc = B19013_001E, MedRent = B25058_001E,
+         TotalPoverty = B06012_002E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(pctWhite = ifelse(TotalPop > 0, Whites / TotalPop,0),
+         pctBachelors = ifelse(TotalPop > 0, ((FemaleBachelors + MaleBachelors) / TotalPop),0),
+         pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+         year = "2019") %>%
+  dplyr::select(-Whites, -FemaleBachelors, -MaleBachelors, -TotalPoverty) 
+
+#SAIYA
+#AllTracts <- rbind(tracts19, acsTractsMESA.2017)
+
+#CLARA
+AllTracts <- rbind(tracts19,tracts17)
+```
+
+```{r, warning=FALSE, message=FALSE, results='hide'}
+
+#Spatialize Census Data to Mesa Tracts
+MesaAllTracts <- st_intersection(AllTracts, MesaTracts) %>% st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+
+#SAIYA
+#MesaTracts17 <- st_intersection(acsTractsMESA.2017, MesaTracts) %>% st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+#MesaTracts19 <- st_intersection(tracts19, MesaTracts)%>% st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+
+#CLARA
+MesaTracts17 <- st_intersection(tracts17, MesaTracts) %>% st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+MesaTracts19 <- st_intersection(tracts19, MesaTracts)%>% st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant")
+
+#creating variables from ACS data
+MesaTracts17 <- MesaTracts17 %>% mutate(
+         raceContext = ifelse(pctWhite > .5, "Majority_White", "Majority_Non_White"))
+
+MesaTracts19 <- MesaTracts19 %>% mutate(
+         raceContext = ifelse(pctWhite > .5, "Majority_White", "Majority_Non_White"))
+
+Vacancy <- MesaAllTracts %>% dplyr::select(geometry, TotalVacant)%>% na.omit() %>% st_transform(st_crs(fishnet)) %>% distinct() 
+
+MedHHInc <- MesaAllTracts %>% dplyr::select(geometry, MedHHInc)%>% na.omit() %>% st_transform(st_crs(fishnet)) %>% distinct() 
+
+NatAm <- MesaAllTracts %>% dplyr::select(geometry, NativeAm)%>% na.omit() %>% st_transform(st_crs(fishnet)) %>% distinct() 
+
+PovRate <- MesaAllTracts %>% dplyr::select(geometry, pctPoverty)%>% na.omit() %>% st_transform(st_crs(fishnet)) %>% distinct() 
+
+Hisp <- MesaAllTracts %>% dplyr::select(geometry, Hisp)%>% na.omit() %>% st_transform(st_crs(fishnet)) %>% distinct() 
+
+PctWhite <- MesaAllTracts %>% dplyr::select(geometry, pctWhite)%>% na.omit() %>% st_transform(st_crs(fishnet)) %>% distinct() 
+
+#create sf of overdose points and counts
+Overdose.sf<- 
+  dataset %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%  st_transform('ESRI:102248') %>% distinct()
+
+Overdose.sf<- subset(Overdose.sf, location.longitude< -112) 
+
+Overdose.sf<- Overdose.sf%>%
+  mutate(Overdose = 1)
+
+#Set Seasons
+Overdose.sf<- Overdose.sf%>% 
+  mutate(season = case_when(
+    month %in% c('Dec', 'Jan', 'Feb') ~ 'Winter',
+    month %in% c('Mar', 'Apr', 'May') ~ 'Spring',
+    month %in% c('Jun', 'Jul', 'Aug') ~ 'Summer',
+    month %in% c('Sep', 'Oct', 'Nov') ~ 'Fall'
+  ))
+
+#SetTimeDuringTheWeek
+Overdose.sf<- Overdose.sf%>%
+  mutate(Week = case_when(
+    day_of_week %in% c('Monday', 'Tuesday', 'Wednesday', 'Thursday') ~ 'Weekday',
+    day_of_week %in% c('Friday', 'Saturday', 'Sunday') ~ 'Weekend'
+  ))
+
+ggplot(Overdose.sf, aes(year), colours(palette5)) + 
+  geom_bar(mapping = aes(x = year, fill = year), position = "dodge") +
+  scale_fill_manual(values = c("#E6A0C4", "#C6CDF7", "#D8A499", "#7294D4")) +
+  labs(title = "Count of Overdoses in Mesa, AZ", subtitle = "2017-2020", x = "Year", y = "# of Incidents") + theme_bw() + theme(legend.position = "none")
+```
+
+The above bar plot shows the increase in opioid overdoses in Mesa since 2017. 2021 data is missing from the plot as it was parsed out of the dataset for use when running the model to see if the model predicted accurately. 
+
+## Exploring the spatial data
+```{r, warning=FALSE, message=FALSE, results='hide'}
+# Map of Overdoses in Mesa and Map of Narcotics Arrests 
+grid.arrange(ncol=2,
+ggplot() + 
+  geom_sf(data = cityBound) +
+  geom_sf(data = Overdose.sf, colour="#7294D4", size=0.1, show.legend = "point") +
+  labs(title= "Locations of Opioid Overdoses", subtitle = "Mesa, AZ 2017-21") +
+  mapTheme(),
+ggplot() +
+  geom_sf(data = cityBound) +
+  geom_sf(data = NarcArrest, colour="#08519c", size=0.09, show.legend = "point") +
+  labs(title= "Locations of Narcotic Drug Posession", subtitle = "Mesa, AZ 2017-21") +
+  mapTheme() + theme_bw())
+```
+ 
+*Above you can see the overlap between the locations of opioid overdoses and the locations of narcotics arrests in Mesa, AZ. This indicates that narcotics arrests will be a helpful indicator for potential overdose locations*
+ 
+```{r, warning=FALSE, message=FALSE}
+
+# Map of Seasons
+Seasons <- subset(Overdose.sf, select=c("season"))
+ggplot() +
+  geom_sf(data = cityBound, color = "white")+
+  geom_sf(data = Seasons, aes(color = season), show.legend = TRUE, size=0.5) +
+  scale_color_manual(values = c("#F0F9E8","#BAE4BC","#7BCCC4","#43A2CA")) +
+  labs(caption = "Figure . Overdoses by Season")+
+  mapTheme()
+
+```
+
+*In the map above it is clear that there are many overdoses in the summer and spring. In these months, heat can reach over 100 degrees in Arizona, forcing many people indoors and potentially increasingly the likelihood of substance abuse.*
+
+```{r, warning=FALSE, message=FALSE}
+# Map of Day of the Week
+Week <- subset(Overdose.sf, select=c("Week"))
+ggplot() +
+  geom_sf(data = cityBound, color = "white")+
+  geom_sf(data = Week, aes(color = Week), show.legend = TRUE, size=0.5) +
+  scale_color_manual(values = c("#BAE4BC","#43A2CA")) +
+  labs(caption = "Figure . Overdoses by Week or Weekend")+
+  mapTheme()
+
+```
+
+*In the map above it is clear that there are many overdoses occur on weekend days.*
+
+```{r, warning=FALSE, message=FALSE}
+# Percent White 2017
+ggplot() +
+  geom_sf(data = cityBound, color= "#EFF3FF")+
+  geom_sf(data = MesaTracts17, aes(fill=pctWhite)) +
+  labs(caption = "Figure E. Percent White in Mesa, AZ 2017") +
+  mapTheme()
+```
+
+*In the map above we can see the percentage of white identifying people per census tract in Mesa, AZ in 2017.*
+
+```{r, warning=FALSE, message=FALSE}
+# Percent White 2019
+ggplot() +
+  geom_sf(data = cityBound, color= "#EFF3FF")+
+  geom_sf(data = MesaTracts19, aes(fill=pctWhite)) +
+  labs(caption = "Figure E. Percent White in Mesa, AZ 2019") +
+  mapTheme()
+
+```
+
+*In the map above we can see the percentage of white identifying people per census tract in Mesa, AZ in 2019. This statistic is often a proxy indicator for wealth*
+
+```{r, warning=FALSE, message=FALSE}
+# Percent Poverty 17
+ggplot() +
+  geom_sf(data = cityBound, color= "#EFF3FF")+
+  geom_sf(data = MesaTracts17, aes(fill=pctPoverty)) +
+  labs(caption = "Figure E. Percent Poverty in Mesa, AZ 2017") +
+  mapTheme()
+```
+
+*In the map above we can see the percentage of persons in poverty people per census tract in Mesa, AZ in 2017. This confirms the assertion above that minority areas of Mesa may experience more poverty*
+
+
+```{r, warning=FALSE, message=FALSE}
+# Percent Poverty 19
+ggplot() +
+  geom_sf(data = cityBound, color= "#EFF3FF")+
+  geom_sf(data = MesaTracts19, aes(fill=pctPoverty)) +
+  labs(caption = "Figure E. Percent Poverty in Mesa, AZ 2019") +
+  mapTheme()
+```
+
+*In the map above we can see the percentage of people experiencing poverty per census tract in Mesa, AZ in 2019. While some poverty in the west has declined it is still highly concentrated there*
+
+
+# Exploratory Analysis
+
+After wrangling data, we conducted preliminary exploratory analysis through visualizing the data through bar charts and maps of spatial data. Next, we visualize the outcome variable data, by count per gridcell, to the fishnet grid of 500 feet by 500 feet, which is shown below.  Here we see there is a higher concentration of opioid overdoses to the west and especially concentrated in the far center west area of Mesa.
+
+```{r, warning=FALSE, message=FALSE}
+#creating fishnet grid map of overdoses
+OD_net <- 
+  dplyr::select(Overdose.sf) %>% 
+  mutate(countOD = 1) %>% 
+  aggregate(., fishnet, sum) %>%
+  mutate(countOD = replace_na(countOD, 0),
+         uniqueID = rownames(.),
+         cvID = sample(round(nrow(fishnet) / 24), size=nrow(fishnet), replace = TRUE))
+
+ggplot() +
+  geom_sf(data = OD_net, aes(fill = countOD )) +
+  scale_fill_viridis() +
+  labs(title = "Fishnet of Overdoses") +
+  mapTheme()
+
+```
+
+To determine the type of regression to use in the model, we looked at the distribution of opioid overdose counts per gridcell across Mesa to see the shape of the curve. Below, in the histogram, we see it is Poisson distribution, with many grid cells having no overdoses, indicating that a Poisson regression would be best for our outcome. Further, Poisson regression outcome variables align with our dataset structure of count per gridcell. 
+
+```{r, warning=FALSE, message=FALSE}
+hist(OD_net$countOD)
+```
+
+Below, a density map confirms what we saw above in the fishnet indicating that western Mesa has been the site of the majority of overdoses in the city.
+
+```{r, warning=FALSE}
+## Aggregating points to the grid
+ggplot() +
+  geom_sf(data = cityBound, fill = "grey40") +
+  stat_density2d(data = data.frame(st_coordinates(Overdose.sf)),
+                 aes(X, Y, fill = ..level.., alpha = ..level..),
+                 size = 0.01, bins = 40, geom = 'polygon') +
+  scale_fill_viridis() +
+  scale_alpha(range = c(0.00, 0.35), guide = FALSE) +
+  labs(title = "Density of Opioid Overdoses in Mesa, AZ 2017-21") +
+  mapTheme(title_size = 12) + theme(legend.position = "none")
+```
+## Feature Engineering
+
+To increase the power of our model we engineered certain features to the fishnet. We used two methods, count per gridcell, or how many of a specific variable per gridcell, and nearest neighbor, or the average distance of each grid cell to a spatial feature. 
+
+
+```{r, warning=FALSE, message=FALSE}
+#Risk factors to fishnet grid
+st_c <- st_coordinates
+st_coid <- st_centroid
+
+vars_net <- 
+  rbind(Disorderly.Conduct, car_breakins, PossofPara, NarcArrest, Suicide, shoplifting, Parks)  %>%
+  st_join(., fishnet, join=st_within) %>%
+  st_drop_geometry() %>%
+  group_by(uniqueID, legend) %>%
+  summarize(count = n()) %>%
+    full_join(fishnet) %>%
+    spread(legend, count, fill=0) %>%
+    st_sf() %>%
+    dplyr::select(-`<NA>`) %>%
+    na.omit() %>%
+    ungroup()
+
+
+vars_net.long <- 
+  gather(vars_net, Variable, value, -geometry, -uniqueID)
+
+vars <- unique(vars_net.long$Variable)
+mapList <- list()
+
+for(i in vars){
+  mapList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(vars_net.long, Variable == i), aes(fill=value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme()}
+
+do.call(grid.arrange,c(mapList, ncol=3, top="Risk Factors by Fishnet"))
+```
+
+In the fishnet above we can see that narcotics arrests, disorderly conduct, car breakins, possession of paraphernalia, and suicides may all help inform our model as they are happening in the same area as many overdoses. This kind of police incident may also be more frequently reported and could also be due to an increased police presence in these areas, important factors to keep in mind for our analysis. 
+
+
+```{r, warning=FALSE, message=FALSE}
+#Creating spatial process to fishnet dataset
+# NEAREST NEIGHBOR
+
+st_c <- st_coordinates
+st_coid <- st_centroid
+
+
+varsxy <- st_c(st_coid(vars_net))
+
+st_NA <- st_c(NarcArrest)
+
+parksxy <- st_c(Parks) %>%
+  na.omit()
+
+Suicidexy <- st_c(Suicide) %>%
+  na.omit()
+
+
+vars_net <-
+  vars_net %>%
+    mutate(
+      NarcArrest.nn =
+        nn_function(varsxy, st_NA,3),
+      DisorderlyConduct.nn =
+        nn_function(st_c(st_coid(vars_net)), st_c(Disorderly.Conduct),3),
+      Parks.nn =
+        nn_function(varsxy, parksxy,3),
+      Shoplifting.nn =
+        nn_function(st_c(st_coid(vars_net)), st_c(shoplifting),3),
+      PossofPara.nn =
+        nn_function(st_c(st_coid(vars_net)), st_c(PossofPara),3),
+      CarBreakin.nn =
+        nn_function(st_c(st_coid(vars_net)), st_c(car_breakins),3),
+      Suicide.nn = 
+        nn_function(st_c(st_coid(vars_net)), Suicidexy,3))
+#Note the use of select and ends_with to map only the nearest neighbor features.
+
+vars_net.long.nn <- 
+  dplyr::select(vars_net, ends_with(".nn")) %>%
+    gather(Variable, value, -geometry)
+
+vars <- unique(vars_net.long.nn$Variable)
+mapList <- list()
+
+for(i in vars){
+  mapList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(vars_net.long.nn, Variable == i), aes(fill=value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme()}
+
+do.call(grid.arrange,c(mapList, ncol = 3, top = "Nearest Neighbor risk Factors by Fishnet"))
+```
+
+Here are our engineered features using nearest neighbors based on crime data pulled to add another dimension into our spatial process regression. As we would expect based on the Just Risk Factors plots, the light areas are in inversely related to areas that were previously hotspots in Just Factors.
+
+### Creating Final Fishnet Grid
+
+The last step in creating our dataset is to join the variable dataframe to the overdose points on the fishnet grid. Now, our dependent and independent variables are in a singular spatialized dataset. 
+
+
+```{r, warning=FALSE, message=FALSE}
+# Create Final Fishnet
+
+
+vars_net<-
+  vars_net%>%
+  st_centroid()%>%
+  st_join(AllTracts)%>%
+  na.omit()
+
+final_net <-
+  left_join(OD_net, st_drop_geometry(vars_net), by="uniqueID")
+
+final_net <- st_join(final_net, MesaTracts)
+
+final_net <-
+  st_centroid(final_net) %>%
+      st_drop_geometry() %>%
+      left_join(dplyr::select(final_net, geometry, uniqueID)) %>%
+      st_sf() %>%
+  na.omit()
+
+```
+
+## Local Moran's I for fishnet grid cells
+
+Now we have our final dataframe, we need to test for spatial autocorrelation in the location of overdoses by looking at the Moran’s I statistic. It is important to test for spatial autocorrelation as geographic data points have strong dependencies when they closer they are in space. We are testing the null hypothesis that counts of opioid overdoses at a given location are randomly distributed relative to its immediate neighbors (grid cells). 
+
+The maps show the Moran’s I, the p-value, and hotspot density. In areas where the Moran’s I is higher, it is indicated by yellow. This means there is evidence of local clustering. If the p-value is blue or dark purple in those areas indicated by yellow for a higher Moran’s I, then there is evidence of statistically significant local clustering, meaning we reject the null hypothesis of random distribution. The hotspot map shows intensity, or areas with high Moran’s I and low p-values. The significant hotspots shown based on the Moran's I, is different than our original kernel density map with more areas showing up as hotspots, rather than just the areas on the far west side near Phoenix, Tempe, and Scottsdale.  
+
+Using a p-value of 0.05 as a cutoff, we add a spatial feature to our model based on the distance of each gridcell to significant hotspots. 
+```{r, warning=FALSE, message=FALSE}
+final_net.nb <- poly2nb(as_Spatial(final_net), queen=TRUE)
+final_net.weights <- nb2listw(final_net.nb, style="W", zero.policy=TRUE)
+
+
+final_net.localMorans <- 
+  cbind(
+    as.data.frame(localmoran(final_net$countOD, final_net.weights)),
+    as.data.frame(final_net)) %>% 
+    st_sf() %>%
+      dplyr::select(countOD = countOD, 
+                    Local_Morans_I = Ii, 
+                    P_Value = `Pr(z != E(Ii))`) %>%
+      mutate(Significant_Hotspots = ifelse(P_Value <= 0.05, 1, 0)) %>%
+      gather(Variable, Value, -geometry)
+  
+vars <- unique(final_net.localMorans$Variable)
+varList <- list()
+
+for(i in vars){
+  varList[[i]] <- 
+    ggplot() +
+      geom_sf(data = filter(final_net.localMorans, Variable == i), 
+              aes(fill = Value), colour=NA) +
+      scale_fill_viridis(name="") +
+      labs(title=i) +
+      mapTheme() + theme(legend.position="bottom")}
+
+### Plotting local Moran's I results
+
+
+do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, ODs"))
+
+```
+
+```{r, warning=FALSE, message=FALSE}
+#sig to hotspots and map
+final_net <-
+  final_net %>% 
+  mutate(OD.isSig = 
+           ifelse(localmoran(final_net$countOD, 
+                             final_net.weights)[,5] <= 0.0000001, 1, 0)) %>%
+  mutate(OD.isSig.dist = 
+           nn_function(st_coordinates(st_centroid(final_net)),
+                       st_coordinates(st_centroid(
+                         filter(final_net, OD.isSig == 1))), 1))
+
+ggplot() +
+  geom_sf(data=final_net, aes(fill=OD.isSig.dist), colour=NA) +
+  scale_fill_viridis(name="Distance", option="virdis") +
+  labs(title="Distance to significant overdose hotspots", subtitle = "Figure X.") +
+  mapTheme()
+```
+
+The map above confirms our prior exploratory findings that suggest high levels of overdoses in the western part of Mesa and low numbers of overdoses in the east, especially the south east. 
+
+
+## Correlation Plots
+
+Next, we look at correlation tests to understand the association between the risk factors and outcome variable. Below are the correlation plots that show features with associations to the outcome of count of opioid overdoses. We used these features in our model. 
+
+The scatterplots show the features we used are counts per grid cells and nearest neighbor engineered features. As we see from the scatterplots, the features concerning crime show a correlation with our outcome variable. For our regressions, we use the crime features that are counts per grid cell for the Just Risk Factor regression, and use the nearest neighbor features in the Spatial Process.
+
+Below you can see features that strongly correlate with overdoses such as Narc Arrests, Car Breakins, Disorderly Conduct,Posession of Paraphanalia, Suicide, Median Household Income, and Total Vacancy. For these reasons we decided that these were strong features to be included in our model since they have a likelihood of helping to indicate the location of overdoses.
+
+
+
+```{r, warning=FALSE, message=FALSE}
+#CORRELATION
+correlation.long <-
+  st_drop_geometry(final_net) %>%
+    dplyr::select(-uniqueID, -cvID,- intptlon, -mtfcc, -tractce, -shape_leng, -countyfp, -geoid_data, -awater,-aland, -statefp, -intptlat, -geoid, -namelsad, -funcstat, -name, -shape_area, -objectid, -GEOID, -MedianYrBuilt, -year, -OD.isSig) %>%
+    gather(Variable, Value, -countOD)
+
+correlation.cor <-
+  correlation.long %>%
+    group_by(Variable) %>%
+    summarize(correlation = cor(as.numeric(Value), countOD))
+
+```
+
+```{r, height=70}
+    
+ggplot(correlation.long, aes(Value, countOD)) +
+  geom_point(size = 0.1) +
+  geom_text(data = correlation.cor, aes(label = paste("r =", round(correlation, 2))),
+            x=-Inf, y=Inf, vjust = 1.5, hjust = 15) +
+  geom_smooth(method = "lm", se = FALSE, colour = "black") +
+  facet_wrap(~Variable, ncol = 6, scales = "free") +
+  labs(title = "OD count as a function of risk factors") +
+  theme_bw()
+
+```
+
+# Modeling the Process
+
+## Making the Model using Poisson Regression 
+
+Now that we have our features, we can build our predictive model. Using a Poisson regression, we create two regressions:
+[1.] Just Risk Factor, or features that correlate with the outcome
+[2.] Spatial Process, features included in the first regression with additional spatial features baesd on the Moran's I test
+```{r, warning=FALSE, message=FALSE}
+## Poission regression- how the dependent variable is-- poisson is a count, if logistic it would binary
+
+reg.vars <- c("NarcArrest.nn", "DisorderlyConduct.nn", "CarBreakin.nn", "Shoplifting.nn", "Suicide.nn", "NarcArrest", "DisorderlyConduct", "Parks.nn", "TotalVacant", "pctWhite", "pctPoverty", "MedHHInc")
+
+reg.ss.vars <- c("NarcArrest.nn", "DisorderlyConduct.nn", "CarBreakin.nn", "Shoplifting.nn", "Suicide.nn","Parks.nn", "OD.isSig", "OD.isSig.dist", "TotalVacant", "pctWhite", "pctPoverty", "MedHHInc")
+
+```
+
+# Generalizability and Accuracy
+
+Generalizability is important for predictive models as it can accurately predict overdose locations based on new data and predict accurately across different area contexts, in our case those contexts are census tracts in Mesa and race. 
+
+## Cross Validation: LOGO-CV and k-fold
+
+To determine how good our model’s predictive power is, we conduct two cross validation tests through a spatial cross validation method, LOGO-CV, “Leave-one-group-out,” and random k-fold validation. Cross validation is important to better understand how the model predicts on different subsets of the data, allowing us to determine the model’s generalizability.  We perform LOGO-CV across Mesa’s census tracts. Each census tract is left out, one at a time, while the model is trained on the rest of the tracts (or n-1 tracts). LOGO-CV generalizes the experience of each particular census tract, or helps capture local differences that could skew the model. K-fold cross validation takes the regression through 100 folds based on the observation ID but does not incorporate the local spatial differences. We conduct both to see which cross validation reduces our errors for each grid cell. 
+
+```{r, warning=FALSE, message=FALSE,  results = 'hide'}
+#CHANGE CROSS VALIDATE
+
+CrossValidate2 <- function(dataset, id, dependentVariable, indVariables) {
+  
+  allPredictions <- data.frame()
+  cvID_list <- unique(dataset[[id]])
+  
+  for (i in cvID_list) {
+    
+    thisFold <- i
+    cat("This hold out fold is", thisFold, "\n")
+    
+    fold.train <- filter(dataset, dataset[[id]] != thisFold) %>% as.data.frame() %>% 
+      dplyr::select(id, geometry, indVariables, dependentVariable)
+    fold.test  <- filter(dataset, dataset[[id]] == thisFold) %>% as.data.frame() %>% 
+      dplyr::select(id, geometry, indVariables, dependentVariable)
+    
+    regression <-
+      glm(countOD ~ ., family = "poisson", 
+          data = fold.train %>% 
+            dplyr::select(-geometry, -id))
+    
+    thisPrediction <- 
+      mutate(fold.test, Prediction = predict(regression, fold.test, type = "response"))
+    
+    allPredictions <-
+      rbind(allPredictions, thisPrediction)
+    
+  }
+  return(st_sf(allPredictions))
+}
+
+```
+
+```{r, warning=FALSE, message=FALSE,  results = 'hide'}
+
+reg.cv <- CrossValidate2(
+  dataset = final_net,
+  id = "cvID",
+  dependentVariable = "countOD",
+  indVariables = reg.vars) %>%
+    dplyr::select(cvID = cvID, countOD, Prediction, geometry)
+
+reg.ss.cv <- CrossValidate2(
+  dataset = final_net,
+  id = "cvID",
+  dependentVariable = "countOD",
+  indVariables = reg.ss.vars) %>%
+    dplyr::select(cvID = cvID, countOD, Prediction, geometry)
+
+reg.spatialCV <- CrossValidate2(
+  dataset = final_net,
+  id = "namelsad",
+  dependentVariable = "countOD",
+  indVariables = reg.vars) %>%
+    dplyr::select(cvID = namelsad, countOD, Prediction, geometry)
+
+reg.ss.spatialCV <- CrossValidate2(
+  dataset = final_net,
+  id = "namelsad",
+  dependentVariable = "countOD",
+  indVariables = reg.ss.vars) %>%
+    dplyr::select(cvID = namelsad, countOD, Prediction, geometry)
+
+ 
+
+```
+## Generalizability Across Space
+
+In the next section we continue to look at the models ability to generalize across space by understanding its accuracy when incorporating spatial features into its predictive power. 
+
+```{r, warning=FALSE, message=FALSE,  results = 'hide'}
+
+reg.summary <- 
+  rbind(
+    mutate(reg.cv,           Error = Prediction - countOD,
+                             Regression = "Random k-fold CV: Just Risk Factors"),
+                             
+    mutate(reg.ss.cv,        Error = Prediction - countOD,
+                             Regression = "Random k-fold CV: Spatial Process"),
+    
+    mutate(reg.spatialCV,    Error = Prediction - countOD,
+                             Regression = "Spatial LOGO-CV: Just Risk Factors"),
+                             
+    mutate(reg.ss.spatialCV, Error = Prediction - countOD,
+                             Regression = "Spatial LOGO-CV: Spatial Process")) %>%
+    st_sf() 
+```
+
+### Mean Absolute Error and Accuracy
+
+In an effort to continue to understand our models accuracy, we look at the MAE or mean absolute error for each of the cross validation methods and each of the regression models. The MAE is calculated for each fold across both regressions in both k-fold and LOGO-CV. MAE metrics indicate a model's performance. The goal is to have a reduced amount of errors, which as shown by the histograms below, the k-fold method seems to have a reduced amount of errors compared to the LOGO-CV, for both regressions. However, the distribution of errors is wider, therefore we need to look at the mean and standard deviation of each regression to gain a better understanding of which regression is a better fit. If our model had good generalizability when inputting new data, the MAE would be similar across each fold, or the histogram bars would all be of similar heights. Overall, the k-fold validation is more accurate than the LOGO-CV method.  
+
+```{r, warning=FALSE, message=FALSE}
+error_by_reg_and_fold <- 
+  reg.summary %>%
+    group_by(Regression, cvID) %>% 
+    summarize(Mean_Error = mean(Prediction - countOD, na.rm = T),
+              MAE = mean(abs(Mean_Error), na.rm = T),
+              SD_MAE = mean(abs(Mean_Error), na.rm = T)) %>%
+  ungroup()
+
+error_by_reg_and_fold %>%
+  ggplot(aes(MAE)) + 
+    geom_histogram(bins = 30, colour="black", fill = "#7294D4") +
+    facet_wrap(~Regression) +  
+    geom_vline(xintercept = 0) + scale_x_continuous(breaks = seq(0, 8, by = 1)) + 
+    labs(title="Distribution of MAE", subtitle = "k-fold cross validation vs. LOGO-CV",
+         x="Mean Absolute Error", y="Count") +
+    theme_bw()
+
+
+```
+
+Now, we look at the MAE and standard deviation of the MAE for all four combinations. The results indicate a relatively high mean error and high standard deviations, however, the LOGO-CV and Spatial Process regression have the lowest, which was different than our initial observations based on the histograms. While the mean MAE is still high in the LOGO-CV and Spatial Process regression, it does indicate that accounting for spatial dependencies is important for our models accuracy. 
+
+```{r, warning=FALSE, message=FALSE}
+
+st_drop_geometry(error_by_reg_and_fold) %>%
+  group_by(Regression) %>% 
+    summarize(Mean_MAE = round(mean(MAE), 2),
+              SD_MAE = round(sd(MAE), 2)) %>%
+  kable()%>%
+  kable_classic(position = "center", full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, border_right = TRUE, border_left = TRUE, color = "black", background = "lightgrey") %>%
+  footnote(general_title = "Table 1: Regression, CV Method and MAE")
+```
+After viewing the histogram and table, we can plot the errors on the map. The map below illustrate where the regression has the highest errors. In areas with higher errors, shown in yellow and green, show that the spatial dependencies were not accounted for in the model as well, however, these areas align with hotspots. Meaning those census tracts of Mesa experience more opioid overdoses compared to the other areas, thus resulting in more errors, or less accuracy. The Just Risk Factors regression is more accurate over a majority of the census tracts in Mesa. All three of these methods- historgram, table, and map are important to get a holistic understanding of our error metric and the model's accuracy.
+
+```{r, warning=FALSE, message=FALSE}
+
+error_by_reg_and_fold %>%
+  filter(str_detect(Regression, "LOGO")) %>%
+  ggplot() +
+    geom_sf(aes(fill = MAE)) +
+    facet_wrap(~Regression) +
+    scale_fill_viridis() +
+    labs(title = "OD errors by LOGO-CV Regression") +
+    mapTheme() + theme(legend.position="bottom")
+```
+Next, we need to test if the errors are spatially autocorrelated. To do so, we calculate a spatial weight matrix at the census tract level and look at the Moran’s I and associated p-values for the errors in the LOGO-CV for both regressions. This helps us to continue to understand the model's generalizabilty  and accuracy across space. 
+
+```{r, warning=FALSE, message=FALSE}
+
+neighborhood.weights <-
+  filter(error_by_reg_and_fold, Regression == "Spatial LOGO-CV: Spatial Process") %>%
+    group_by(cvID) %>%
+      poly2nb(as_Spatial(.), queen=TRUE) %>%
+      nb2listw(., style="W", zero.policy=TRUE)
+
+filter(error_by_reg_and_fold, str_detect(Regression, "LOGO"))  %>% 
+    st_drop_geometry() %>%
+    group_by(Regression) %>%
+    summarize(Morans_I = moran.mc(abs(Mean_Error), neighborhood.weights, 
+                                 nsim = 999, zero.policy = TRUE, 
+                                 na.action=na.omit)[[1]],
+              p_value = moran.mc(abs(Mean_Error), neighborhood.weights, 
+                                 nsim = 999, zero.policy = TRUE, 
+                                 na.action=na.omit)[[3]]) %>%
+  kable()%>%
+  kable_classic(position = "center", full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, border_right = TRUE, border_left = TRUE, color = "black", background = "lightgrey") %>%
+  footnote(general_title = "Moran's I and p-value: Spatial Process + LOGO-CV")
+
+
+```
+In the above table, based on a p-value of 0.05, we can see that the Moran's I statistic for both regressions validated using LOGO-CV are nearly the same. The Moran's I is low and statistically significant, meaning errors are similar across both regression but there is more evidence that overdoses errors are random or dispersed. The spatial variation does not change with the inclusion of spatial features when using LOGO-CV, meaning our model is not over predicting in hotspots. Next, we plot predictions versus observations.
+
+```{r, warning=FALSE, message=FALSE}
+
+st_drop_geometry(reg.summary) %>%
+  group_by(Regression) %>%
+    mutate(OD_Decile = ntile(countOD, 10)) %>%
+  group_by(Regression, OD_Decile) %>%
+    summarize(meanObserved = mean(countOD, na.rm=T),
+              meanPrediction = mean(Prediction, na.rm=T)) %>%
+    gather(Variable, Value, -Regression, -OD_Decile) %>%          
+    ggplot(aes(OD_Decile, Value, shape = Variable)) +
+      geom_point(size = 2) + geom_path(aes(group = OD_Decile), colour = "black") +
+      scale_shape_manual(values = c(2, 17)) +
+      facet_wrap(~Regression) + xlim(0,10) +
+      labs(title = "Predicted and observed overdose by observed overdose decile")  +
+      theme_bw()
+
+```
+The results of the mean observed and mean predicted for all four regressions show that our model under predicts overdoses in census tracts with high counts of opioid overdoses and over predicts in census tracts with low amounts of overdoses. 
+
+To understand what is happening in the model and further test our model's generalizability, we can add in the context of race by census tract as a proxy for neighbhorhood dynamics. We used ACS data on race to create two subsets of our dataset: Majority White and Majority Non-White census tracts. The table below compares the errors for the LOGO-CV regression by the race subsets. 
+
+```{r, warning=FALSE, message=FALSE}
+
+reg.summary %>% 
+  filter(str_detect(Regression, "LOGO")) %>%
+    st_centroid() %>%
+    st_join(MesaTracts19) %>%
+    na.omit() %>%
+      st_drop_geometry() %>%
+      group_by(Regression, raceContext) %>%
+      summarize(mean.Error = mean(Error, na.rm = T)) %>%
+      spread(raceContext, mean.Error) %>%
+      kable(caption = "Mean Error by neighborhood racial context") %>%
+  kable_classic(position = "center", full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, border_right = TRUE, border_left = TRUE, color = "black", background = "lightgrey") 
+
+```
+
+The table above indicates that the model over predicts in majority non-white census tracts and under predicts in majority white census tracts. Next, we will look at how our model performs over time. The importance of this will be discussed in the conclusion.
+
+##Generalizability Across Time
+
+Now that we understand how our predictive model performs over space, or how the model predicts opioid overdoses across census tracts in Mesa, we need to understand how it performs over time. Good generalizability of a model is if it can predict accurately in different spatial contexts and different time periods.  
+
+
+```{r, warning=FALSE, message=FALSE}
+
+
+OD_ppp <- as.ppp(st_coordinates(OD_net), W = st_bbox(final_net))
+OD_KD <- spatstat.core::density.ppp(OD_ppp, 1000)
+
+as.data.frame(OD_KD) %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
+  aggregate(., final_net, mean) %>%
+   ggplot() +
+     geom_sf(aes(fill=value)) +
+     geom_sf(data = sample_n(OD_net, 1500), size = .5) +
+     scale_fill_viridis(name = "Density") +
+     labs(title = "Kernel density ODs") +
+     mapTheme()
+
+
+```
+## Comparing Risk Predictions and Kernel Density
+
+To test generalizability over time, we create a kernel density map using our initial points  from 2017-2020, which is shown above. Next, we use our parsed data from the initial dataset which contained overdoses from 2021 to make risk categories for calculating kernel density. We then do the same process for the risk predictions from our model. We use the LOGO-CV regression as they indicated slightly better model performance, as noted in the earlier stages of the analysis. 
+
+The risk predictions capture the 2021 overdose locations by including them in the highest risk category on the density map based on our model, compared to the kernel density map, showing that generally our model is more useful and better than the “business as usual” or traditional kernel density map. Our Risk Prediction model predicts better than the kernel density map as illustrated by the black points (2021 overdose locations) can be seen more prominently in areas that are yellow, or high risk. Our model predicted accurately over time and is generalizable across time. For our use case, this means that our model will save lives by targeting the correct locations of areas with high risks of overdoses. 
+
+```{r, warning=FALSE, message=FALSE}
+
+
+OD21 <- read.socrata("https://data.mesaaz.gov/resource/qufy-tzv6.json") %>% filter(year==2021)  %>% na.omit %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%  st_transform(st_crs(fishnet)) %>% distinct() %>% .[fishnet,]
+
+
+OD_ppp <- as.ppp(st_coordinates(OD_net), W = st_bbox(final_net))
+OD_KD <- spatstat.core::density.ppp(OD_ppp, 1000)
+
+OD_KDE_sf <-
+as.data.frame(OD_KD) %>%
+  st_as_sf(coords = c("x", "y"), crs = st_crs(final_net)) %>%
+  aggregate(., final_net, mean) %>%
+  mutate(label = "Kernel Density",
+         Risk_Category = ntile(value, 100),
+         Risk_Category = case_when(
+           Risk_Category >= 90 ~ "90% to 100%",
+           Risk_Category >= 70 & Risk_Category <= 89 ~ "70% to 89%",
+           Risk_Category >= 50 & Risk_Category <= 69 ~ "50% to 69%",
+           Risk_Category >= 30 & Risk_Category <= 49 ~ "30% to 49%",
+           Risk_Category >= 1 & Risk_Category <= 29 ~ "1% to 29%"))%>% cbind(
+    aggregate(
+      dplyr::select(OD21) %>% mutate(ODCount = 1), ., sum) %>%
+    mutate(ODCount = replace_na(ODCount, 0))) %>%
+  dplyr::select(label, Risk_Category, ODCount)
+
+
+
+
+
+
+
+``` 
+  
+```{r, warning=FALSE, message=FALSE}
+
+OD_risk_sf <-
+  filter(reg.summary, Regression == "Spatial LOGO-CV: Spatial Process") %>%
+  mutate(label = "Risk Predictions",
+         Risk_Category = ntile(Prediction, 100),
+         Risk_Category = case_when(
+           Risk_Category >= 90 ~ "90% to 100%",
+           Risk_Category >= 70 & Risk_Category <= 89 ~ "70% to 89%",
+           Risk_Category >= 50 & Risk_Category <= 69 ~ "50% to 69%",
+           Risk_Category >= 30 & Risk_Category <= 49 ~ "30% to 49%",
+           Risk_Category >= 1 & Risk_Category <= 29 ~ "1% to 29%")) %>% cbind(
+    aggregate(
+      dplyr::select(OD21) %>% mutate(ODCount = 1), ., sum) %>%
+    mutate(ODCount = replace_na(ODCount, 0))) %>%
+  dplyr::select(label, Risk_Category, ODCount)
+
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+
+  
+OD_compare <-
+rbind(OD_KDE_sf, OD_risk_sf) %>%
+  na.omit() %>%
+  gather(Variable, Value, -label, -Risk_Category, -geometry) 
+
+ggplot(OD_compare) +
+    geom_sf(aes(fill = Risk_Category), colour = NA) +
+    geom_sf(data = sample_n(OD21, 1000), size = .5, colour = "black") +
+    facet_wrap(~label, ) +
+    scale_fill_viridis(discrete = TRUE, option = "viridis") +
+    labs(title="Comparison of Kernel Density and Risk Predictions",
+         subtitle="2017-2020 OD risk predictions; 2021 ODs") +
+    mapTheme()
+```
+Next, we make a bar chart to show the difference in accuracy of Risk Prediction models versus Kernel Density models, or how each model is performing. As mentioned before, we parsed our dataset on point locations of overdoses, filtering out 2021 data to see if the model predicts opioid overdoses accurately. We plotted the rate of the test set from 2021 against risk categories. 
+
+The bar chart below shows that the Risk Prediction model predicts more accurately in the two highest risk categories, while the Kernel Density predicts more accurately in the lowest three risk categories. 
+```{r, warning=FALSE, message=FALSE}
+
+rbind(OD_KDE_sf, OD_risk_sf) %>%
+  st_set_geometry(NULL) %>% na.omit() %>%
+  gather(Variable, Value, -label, -Risk_Category) %>%
+  group_by(label, Risk_Category) %>%
+  summarize(countOD = sum(Value)) %>%
+  ungroup() %>%
+  group_by(label) %>%
+  mutate(Rate_of_test_set_crimes = countOD/ sum(countOD)) %>%
+    ggplot(aes(Risk_Category,Rate_of_test_set_crimes)) +
+      geom_bar(aes(fill=label), position="dodge", stat="identity") +
+      scale_fill_viridis(discrete =TRUE) +
+      labs(title = "Risk prediction vs. Kernel density, 2021 ODs") +
+      plotTheme() + theme(axis.text.x = element_text(angle = 45, vjust = 0.5))
+```
+
+## Is the model generalizable across space and time? 
+
+Our model is decent at generalizing across space when using the LOGO-CV method and incorporating spatial features. Additionally, our model is better fit than the kernel density for predicting overdoses in high risk areas and predicting over time, as indicated in the above map and bar chart. However, our model can be improved greatly as the errors are still large and the model over predicts in majority non-white areas and under predicts in majority white areas, indicating the accuracy needs to be improved. This is important to remedy as the opioid epidemic spans all racial contexts. In a study conducted in Ohio, the demographic association to overdoses was being male, white and aged 20-40. For our model, this can mean mobile health would be deployed inefficiently and would miss possible overdoses, but luckily in the high risk areas our model does a better job predicting overdoses than traditional models. Further, in majority non-white areas the deployment of unnecessary vehicles operated by the state or city may not be welcome, especially if it comes with increased police presence. 
+
+
+# Conclusion
+
+As shown indicated by the use case, opioid overdoses are a vast challenge facing Mesa and Arizona residents. Predicting where overdoses could occur can save lives and save money through targeted prevention measures, such as our proposed dashboard ASSIST, which indicates high risk areas for mobile public health prevention services. The reason for creating our model was to compete with the “business as usual” models based on traditional kernel density, or hotspot mapping which are usually used in predictive modeling. By integrating more features and controlling for spatial autocorrelation, our model can better predict overdose locations, allowing for better allocation of public health and medical resources to prevent overdoses.
+
+## Limitations of the Model
+
+Our model can be improved by adding more data, the inclusion of more risk factors and spatial features will not only improve the model but help to design better prevention programs. Additional variables such as pharmacies prescribing opioids and in what quantity, libraries and other places that have Narcan available, and availability of mental health services can continue to make a robust predictive model.
+
+We need to understand the models accuracy better, and improve it. Other goodness of fit metrics such as Mean Average Percent Error, and spatial lag metrics could be used to gain deeper insight into our models performance. This ties into adding more features to increase the models robustness. 
+
+We do not know how the data was collected and what biases may have become ingrained into the dataset from the City of Mesa. Selection bias on who is included in the overdose dataset is unknown. Additionally, overdoses may be recorded more in certain areas compared to other areas based on access to resources. While standards are in place, dataset are made by humans, which is subject to human error and subjectivity. 
+
+
+## Addressing the Use Case
+
+While our model may need more refinement from the Mesa's top Data Scientists, it does a decent job predicting in high risk areas, which are the priority areas for public health programming. We hope that our model's integration with ASSIST will help health and medical services decrease opioid overdoses and help Arizona meet its goals around reducing opioid related fatalies and injuries, as well as reducing the cost burden on the health system. 
+
+Once our model is integrated with the ASSIST dashboard, Mesa’s data department should add overdose location data in real-time to the model to increase generalizability and accuracy, along with the aforementioned additional features.The accuracy and generalizability of our model are both important, this can be debated but we think that having a model that predicts overdoses accurately and in a diverse set of contexts that apply to Mesa is important for the success for the success of the use case. However, generalizablity to an area that is high risk is needed for the model to be successful as ASSIST, which was accomplished. The model may not be generalizable to other cities, as each city has its own set of features that would need to be included in the model for accurate prediction, since each city has differences when dealing with health challenges and epidemics.
+
+Predictive models can be problematic in many situations, such as predictive policing, we hope that this model can be used for the benefit of society, to inform public health program deployment to high risk areas, and reduce fatalities associated with opioid overdoses and overdoses in general. 
+
+
+
